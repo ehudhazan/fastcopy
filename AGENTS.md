@@ -70,6 +70,7 @@ FastCopy aims to be the fastest file copy tool for .NET developers, providing a 
 - Use `var` when the type is apparent from the right-hand side (e.g., `var list = new List<string>();`).
 - Use explicit types for primitive types or when the type is not obvious.
 - Favor `record` types for immutable data structures.
+- If possible, make class sealed for better performance.
 
 ### Error Handling
 - Use exceptions for truly exceptional circumstances.
@@ -125,11 +126,13 @@ FastCopy aims to be the fastest file copy tool for .NET developers, providing a 
 ---
 
 ## 5. Instructions for Agents
-1. **Self-Verification**: After making changes, always run `dotnet build`.
-2. **Performance Monitoring**: Verify you aren't introducing unnecessary allocations in `CopyEngine`.
-3. **TUI Updates**: Ensure the UI remains responsive and handles window resizing.
-4. **New Files**: Add new classes to their own files named after the class. Use file-scoped namespaces.
-5. **Tooling**: Prefer using standard `dotnet` CLI tools.
+1. **Self-Verification**: After making changes, always run `dotnet build`. Ensure the build passes with **no errors and no warnings** (treat warnings as errors).
+2. **AOT Compliance**: Ensure the project is configured with `<PublishAot>true</PublishAot>` and that no code changes violate AOT compatibility (e.g., avoid unbounded reflection).
+3. **Performance Monitoring**: Verify you aren't introducing unnecessary allocations in `CopyEngine`.
+4. **TUI Updates**: Ensure the UI remains responsive and handles window resizing.
+5. **New Files**: Add new classes to their own files named after the class. Use file-scoped namespaces.
+6. **Tooling**: Prefer using standard `dotnet` CLI tools.
+7. **One Type Per File**: Ensure each class, struct, interface, enum, or delegate is in its own `.cs` file. Each file must not have more than one top-level item.
 
 ---
 

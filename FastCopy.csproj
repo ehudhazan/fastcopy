@@ -1,15 +1,26 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <PublishAot>true</PublishAot>
+    <OptimizationPreference>Speed</OptimizationPreference>
+    <StackTraceSupport>false</StackTraceSupport>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <StaticExecutable>true</StaticExecutable>
+    <TrimMode>link</TrimMode>
+    <RootAllApplicationAssemblies>false</RootAllApplicationAssemblies>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.IO.Pipelines" Version="10.0.3" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.3" />
     <PackageReference Include="Terminal.Gui" Version="2.0.0-alpha.*" />
+    <PackageReference Include="SSH.NET" Version="2024.2.0" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.*" />
   </ItemGroup>
 
 </Project>
