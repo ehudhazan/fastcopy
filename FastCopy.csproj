@@ -6,20 +6,28 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
+    <!-- NativeAOT Configuration -->
     <PublishAot>true</PublishAot>
-    <OptimizationPreference>Speed</OptimizationPreference>
+    <OptimizationPreference>Size</OptimizationPreference>
     <StackTraceSupport>false</StackTraceSupport>
     <InvariantGlobalization>true</InvariantGlobalization>
-
-    <!-- Use lld linker instead of bfd to avoid linker issues with binutils 2.42 -->
+    
+    <!-- Suppress Terminal.Gui AOT compatibility warnings (not fully AOT compatible yet) -->
+    <NoWarn>$(NoWarn);IL2026;IL3050;IL2104;IL3053;NETSDK1194</NoWarn>
+    
+    <!-- Trimming Configuration for Size Optimization -->
+    <TrimMode>link</TrimMode>
+    <RootAllApplicationAssemblies>false</RootAllApplicationAssemblies>
+    
+    <!-- ILC (IL Compiler) Settings -->
     <LinkerFlavor>lld</LinkerFlavor>
-    <IlcOptimizationPreference>Speed</IlcOptimizationPreference>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
     <IlcGenerateCompleteTypeMetadata>false</IlcGenerateCompleteTypeMetadata>
     <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
     <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
     
-    <TrimMode>link</TrimMode>
-    <RootAllApplicationAssemblies>false</RootAllApplicationAssemblies>
+    <!-- JSON Source Generation (AOT-compatible) -->
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
   </PropertyGroup>
 
   <ItemGroup>

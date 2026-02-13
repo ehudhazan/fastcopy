@@ -12,19 +12,71 @@ namespace FastCopy.Core;
 /// </summary>
 public sealed class TransferEngine
 {
+    // Global rate limiter shared across all workers
+    private static TokenBucket? _globalRateLimiter;
+    private static readonly object _limiterLock = new();
+
+    /// <summary>
+    /// Set the global rate limit for all transfer operations.
+    /// All workers will share the same TokenBucket and compete for bandwidth.
+    /// </summary>
+    /// <param name="bytesPerSec">Rate limit in bytes per second. 0 = unlimited.</param>
+    public static void SetGlobalLimit(long bytesPerSec)
+    {
+        if (bytesPerSec < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bytesPerSec), "Bytes per second must be non-negative.");
+        }
+
+        lock (_limiterLock)
+        {
+            if (_globalRateLimiter == null)
+            {
+                _globalRateLimiter = new TokenBucket(bytesPerSec);
+            }
+            else
+            {
+                _globalRateLimiter.SetLimit(bytesPerSec);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Get the current global rate limiter instance.
+    /// Returns null if no global limit has been set.
+    /// </summary>
+    public static TokenBucket? GetGlobalRateLimiter()
+    {
+        lock (_limiterLock)
+        {
+            return _globalRateLimiter;
+        }
+    }
+
+    /// <summary>
+    /// Clear the global rate limit (removes all rate limiting).
+    /// </summary>
+    public static void ClearGlobalLimit()
+    {
+        lock (_limiterLock)
+        {
+            _globalRateLimiter = null;
+        }
+    }
     /// <summary>
     /// Copy a file asynchronously with optional rate limiting and progress tracking.
     /// </summary>
     /// <param name="sourcePath">Source file path</param>
     /// <param name="destinationPath">Destination file path</param>
-    /// <param name="globalRateLimiter">Optional global rate limiter shared across all workers. Pass null for no limit.</param>
+    /// <param name="globalRateLimiter">Optional global rate limiter shared across all workers. Pass null to use the static global limiter (if set).</param>
     /// <param name="pauseToken">Token for pause/resume support</param>
     /// <param name="onProgress">Callback for progress updates</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <remarks>
-    /// For global rate limiting across multiple concurrent copy operations, pass the same 
-    /// TokenBucket instance to all CopyFileAsync calls. The TokenBucket is thread-safe and
-    /// will aggregate throughput across all workers.
+    /// For global rate limiting across multiple concurrent copy operations, either:
+    /// 1. Pass the same TokenBucket instance to all CopyFileAsync calls, OR
+    /// 2. Call SetGlobalLimit() before starting transfers and pass null for globalRateLimiter.
+    /// The TokenBucket is thread-safe and will aggregate throughput across all workers.
     /// </remarks>
     public async ValueTask CopyFileAsync(
         string sourcePath,
@@ -34,6 +86,9 @@ public sealed class TransferEngine
         ProgressCallback? onProgress = null,
         CancellationToken cancellationToken = default)
     {
+        // Use the provided limiter, or fall back to the global static limiter
+        TokenBucket? effectiveLimiter = globalRateLimiter ?? GetGlobalRateLimiter();
+
         var sourceOptions = new FileStreamOptions
         {
             Mode = FileMode.Open,
@@ -83,7 +138,7 @@ public sealed class TransferEngine
                         await pauseToken.WaitWhilePausedAsync(cancellationToken);
 
                         // Apply global rate limiting (Zero-GC, SpinWait-based)
-                        globalRateLimiter?.Consume(segment.Length, cancellationToken);
+                        effectiveLimiter?.Consume(segment.Length, cancellationToken);
 
                         await writer.WriteAsync(segment, cancellationToken);
                         copiedBytes += segment.Length;

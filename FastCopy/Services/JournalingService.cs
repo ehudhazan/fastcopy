@@ -215,8 +215,23 @@ public sealed class JournalingService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Flushes all pending writes to disk.
+    /// Call this before application shutdown to ensure data integrity.
+    /// </summary>
+    public void Flush()
+    {
+        lock (_lock)
+        {
+            _accessor?.Flush();
+        }
+    }
+
     public void Dispose()
     {
+        // Ensure all data is flushed before disposing
+        Flush();
+        
         _accessor?.Dispose();
         _mmf?.Dispose();
     }
