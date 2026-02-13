@@ -1,6 +1,30 @@
 using FastCopy.Processors;
+using FastCopy.Services;
 using Terminal.Gui;
 using FastCopy.UI;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
+
+if (args.Contains("--serve"))
+{
+    var builder = WebApplication.CreateSlimBuilder(args);
+    
+    builder.Logging.ClearProviders();
+    builder.Logging.AddConsole();
+    
+    builder.Services.AddGrpc();
+    
+    var app = builder.Build();
+    
+    app.MapGrpcService<GrpcFileTransferService>();
+    app.MapGet("/", () => "Use a gRPC client to communicate with this server.");
+    
+    Console.WriteLine("Starting FastCopy gRPC Server...");
+    await app.RunAsync();
+    return;
+}
 
 if (args.Length == 0)
 {
