@@ -38,12 +38,26 @@ if (args.Length == 0)
 }
 
 string? fileListPath = null;
+int retries = 2; // Default retry count
 
 for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--file-list" && i + 1 < args.Length)
     {
         fileListPath = args[i + 1];
+        i++;
+    }
+    else if (args[i] == "--retries" && i + 1 < args.Length)
+    {
+        if (int.TryParse(args[i + 1], out int parsedRetries) && parsedRetries >= 0)
+        {
+            retries = parsedRetries;
+        }
+        else
+        {
+            Console.Error.WriteLine("Error: --retries must be a non-negative integer.");
+            return;
+        }
         i++;
     }
 }
