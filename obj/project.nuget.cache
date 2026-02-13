@@ -1,0 +1,56 @@
+{
+  "version": 2,
+  "dgSpecHash": "Tz3RJq1YZfc=",
+  "success": true,
+  "projectFilePath": "/home/ehud/work/fastcopy/FastCopy.csproj",
+  "expectedPackageFiles": [
+    "/home/ehud/.nuget/packages/colorhelper/1.8.1/colorhelper.1.8.1.nupkg.sha512",
+    "/home/ehud/.nuget/packages/humanizer.core/2.14.1/humanizer.core.2.14.1.nupkg.sha512",
+    "/home/ehud/.nuget/packages/jetbrains.annotations/2024.2.0/jetbrains.annotations.2024.2.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.bcl.asyncinterfaces/8.0.0/microsoft.bcl.asyncinterfaces.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.build.tasks.git/8.0.0/microsoft.build.tasks.git.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.codeanalysis/4.10.0/microsoft.codeanalysis.4.10.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.codeanalysis.analyzers/3.3.4/microsoft.codeanalysis.analyzers.3.3.4.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.codeanalysis.common/4.10.0/microsoft.codeanalysis.common.4.10.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.codeanalysis.csharp/4.10.0/microsoft.codeanalysis.csharp.4.10.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.codeanalysis.csharp.workspaces/4.10.0/microsoft.codeanalysis.csharp.workspaces.4.10.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.codeanalysis.visualbasic/4.10.0/microsoft.codeanalysis.visualbasic.4.10.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.codeanalysis.visualbasic.workspaces/4.10.0/microsoft.codeanalysis.visualbasic.workspaces.4.10.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.codeanalysis.workspaces.common/4.10.0/microsoft.codeanalysis.workspaces.common.4.10.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.extensions.dependencyinjection/8.0.0/microsoft.extensions.dependencyinjection.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.extensions.dependencyinjection.abstractions/8.0.0/microsoft.extensions.dependencyinjection.abstractions.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.extensions.logging/8.0.0/microsoft.extensions.logging.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.extensions.logging.abstractions/8.0.0/microsoft.extensions.logging.abstractions.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.extensions.options/8.0.0/microsoft.extensions.options.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.extensions.primitives/8.0.0/microsoft.extensions.primitives.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.sourcelink.common/8.0.0/microsoft.sourcelink.common.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/microsoft.sourcelink.github/8.0.0/microsoft.sourcelink.github.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/system.composition/8.0.0/system.composition.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/system.composition.attributedmodel/8.0.0/system.composition.attributedmodel.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/system.composition.convention/8.0.0/system.composition.convention.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/system.composition.hosting/8.0.0/system.composition.hosting.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/system.composition.runtime/8.0.0/system.composition.runtime.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/system.composition.typedparts/8.0.0/system.composition.typedparts.8.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/system.io.abstractions/21.0.22/system.io.abstractions.21.0.22.nupkg.sha512",
+    "/home/ehud/.nuget/packages/system.io.pipelines/10.0.3/system.io.pipelines.10.0.3.nupkg.sha512",
+    "/home/ehud/.nuget/packages/system.text.json/8.0.5/system.text.json.8.0.5.nupkg.sha512",
+    "/home/ehud/.nuget/packages/terminal.gui/2.0.0/terminal.gui.2.0.0.nupkg.sha512",
+    "/home/ehud/.nuget/packages/testableio.system.io.abstractions/21.0.22/testableio.system.io.abstractions.21.0.22.nupkg.sha512",
+    "/home/ehud/.nuget/packages/testableio.system.io.abstractions.wrappers/21.0.22/testableio.system.io.abstractions.wrappers.21.0.22.nupkg.sha512",
+    "/home/ehud/.nuget/packages/wcwidth/2.0.0/wcwidth.2.0.0.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1510",
+      "level": "Warning",
+      "message": "PackageReference System.IO.Pipelines will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.",
+      "projectPath": "/home/ehud/work/fastcopy/FastCopy.csproj",
+      "warningLevel": 1,
+      "filePath": "/home/ehud/work/fastcopy/FastCopy.csproj",
+      "libraryId": "System.IO.Pipelines",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    }
+  ]
+}
