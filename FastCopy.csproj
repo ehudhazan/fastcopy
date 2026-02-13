@@ -5,6 +5,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AssemblyName>fastcopy</AssemblyName>
 
     <!-- NativeAOT Configuration -->
     <PublishAot>true</PublishAot>
@@ -25,9 +26,11 @@
     <IlcGenerateCompleteTypeMetadata>false</IlcGenerateCompleteTypeMetadata>
     <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
     <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
+    <IlcInstructionSet>native</IlcInstructionSet>
     
     <!-- JSON Source Generation (AOT-compatible) -->
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -39,6 +42,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="KubernetesClient" Version="18.0.13" />
+    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.3" />
     <PackageReference Include="Terminal.Gui" Version="2.0.0-alpha.*" />
     <PackageReference Include="SSH.NET" Version="2025.1.0" />
@@ -47,6 +51,14 @@
 
   <ItemGroup>
     <Protobuf Include="FastCopy/Protos/transfer.proto" GrpcServices="Both" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Exclude publish and bin/obj folders from content items -->
+    <Content Remove="publish/**" />
+    <Compile Remove="publish/**" />
+    <EmbeddedResource Remove="publish/**" />
+    <None Remove="publish/**" />
   </ItemGroup>
 
 </Project>

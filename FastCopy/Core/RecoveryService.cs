@@ -133,6 +133,55 @@ public sealed class RecoveryService : IAsyncDisposable
         });
     }
 
+    /// <summary>
+    /// Reads failed jobs from a JSONL file for retry operations.
+    /// </summary>
+    /// <param name="filePath">Path to the JSONL file containing failed jobs.</param>
+    /// <param name="cancellationToken">Cancellation token for stopping the read operation.</param>
+    /// <returns>An async enumerable of CopyJob instances.</returns>
+    public static async IAsyncEnumerable<CopyJob> ReadFailedJobsAsync(
+        string filePath,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(filePath))
+        {
+            throw new FileNotFoundException($"Failed jobs file not found: {filePath}");
+        }
+
+        await using var fileStream = new FileStream(
+            filePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 64 * 1024,
+            useAsync: true);
+
+        using var reader = new StreamReader(fileStream);
+        string? line;
+        
+        while ((line = await reader.ReadLineAsync(cancellationToken)) != null)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            // Parse the JSONL line
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            
+            if (root.TryGetProperty("job", out var jobElement))
+            {
+                var source = jobElement.GetProperty("source").GetString();
+                var destination = jobElement.GetProperty("destination").GetString();
+                var fileSize = jobElement.GetProperty("fileSize").GetInt64();
+                
+                if (!string.IsNullOrEmpty(source) && !string.IsNullOrEmpty(destination))
+                {
+                    yield return new CopyJob(source, destination, fileSize);
+                }
+            }
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;

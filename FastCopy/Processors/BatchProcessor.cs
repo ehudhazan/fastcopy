@@ -35,7 +35,10 @@ public sealed class BatchProcessor
                 string? line;
                 while ((line = await reader.ReadLineAsync(cancellationToken)) != null)
                 {
-                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    // Skip empty lines and comments
+                    if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith('#'))
+                        continue;
+                    
                     await channel.Writer.WriteAsync(line, cancellationToken);
                 }
                 channel.Writer.Complete();

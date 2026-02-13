@@ -194,8 +194,7 @@ public sealed class Dashboard : Window
             Y = Pos.AnchorEnd(2),
             Width = Dim.Fill(),
             Height = 1,
-            Text = "Resource Monitor: Not available",
-            ColorScheme = Colors.ColorSchemes["Base"]
+            Text = "Resource Monitor: Not available"
         };
         Add(_resourceStatsLabel);
     }
@@ -225,8 +224,7 @@ public sealed class Dashboard : Window
             Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(),
             Height = 1,
-            Text = " [P] Pause/Resume  [T] Toggle Stats  [H] Hide UI | Status: Running",
-            ColorScheme = Colors.ColorSchemes["Menu"]
+            Text = " [P] Pause/Resume  [T] Toggle Stats  [H] Hide UI | Status: Running"
         };
         Add(_footerLabel);
     }

@@ -1,0 +1,25 @@
+# FastCopy File List Example
+# Format: source|destination (one pair per line)
+# Lines starting with # are ignored
+# Empty lines are also ignored
+
+# Example 1: Copy a single file
+/path/to/source/file1.txt|/path/to/destination/file1.txt
+
+# Example 2: Copy to a different name
+/home/user/documents/report.pdf|/backup/reports/report-2026-02-13.pdf
+
+# Example 3: Copy multiple files
+/data/logs/app.log|/backup/logs/app.log
+/data/logs/error.log|/backup/logs/error.log
+/data/logs/access.log|/backup/logs/access.log
+
+# Example 4: Cross-directory copies
+/srv/www/index.html|/backup/www/index.html
+/srv/www/style.css|/backup/www/style.css
+
+# Notes:
+# - Destination directories are created automatically if they don't exist
+# - Use absolute or relative paths
+# - Speed limit (--limit) applies globally to all files combined
+# - Files are processed in parallel based on CPU cores
