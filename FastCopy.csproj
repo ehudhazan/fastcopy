@@ -11,7 +11,13 @@
     <StackTraceSupport>false</StackTraceSupport>
     <InvariantGlobalization>true</InvariantGlobalization>
 
-    <StaticExecutable>true</StaticExecutable>
+    <!-- Use lld linker instead of bfd to avoid linker issues with binutils 2.42 -->
+    <LinkerFlavor>lld</LinkerFlavor>
+    <IlcOptimizationPreference>Speed</IlcOptimizationPreference>
+    <IlcGenerateCompleteTypeMetadata>false</IlcGenerateCompleteTypeMetadata>
+    <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
+    <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
+    
     <TrimMode>link</TrimMode>
     <RootAllApplicationAssemblies>false</RootAllApplicationAssemblies>
   </PropertyGroup>
