@@ -6,12 +6,30 @@ using System.Runtime.InteropServices;
 namespace FastCopy.Core;
 
 
+/// <summary>
+/// High-performance file transfer engine using System.IO.Pipelines for zero-copy operations.
+/// Supports global rate limiting, pause/resume, and progress callbacks.
+/// </summary>
 public sealed class TransferEngine
 {
+    /// <summary>
+    /// Copy a file asynchronously with optional rate limiting and progress tracking.
+    /// </summary>
+    /// <param name="sourcePath">Source file path</param>
+    /// <param name="destinationPath">Destination file path</param>
+    /// <param name="globalRateLimiter">Optional global rate limiter shared across all workers. Pass null for no limit.</param>
+    /// <param name="pauseToken">Token for pause/resume support</param>
+    /// <param name="onProgress">Callback for progress updates</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <remarks>
+    /// For global rate limiting across multiple concurrent copy operations, pass the same 
+    /// TokenBucket instance to all CopyFileAsync calls. The TokenBucket is thread-safe and
+    /// will aggregate throughput across all workers.
+    /// </remarks>
     public async ValueTask CopyFileAsync(
         string sourcePath,
         string destinationPath,
-        long? bytesPerSecondLimit = null,
+        TokenBucket? globalRateLimiter = null,
         PauseToken pauseToken = default,
         ProgressCallback? onProgress = null,
         CancellationToken cancellationToken = default)
@@ -42,11 +60,6 @@ public sealed class TransferEngine
 
         var reader = PipeReader.Create(sourceStream, pipeReaderOptions);
         var writer = PipeWriter.Create(destinationStream, pipeWriterOptions);
-        
-        // Token bucket for rate limiting
-        TokenBucket? rateLimiter = bytesPerSecondLimit.HasValue 
-            ? new TokenBucket(bytesPerSecondLimit.Value) 
-            : null;
 
         long totalBytes = sourceStream.Length;
         long copiedBytes = 0;
@@ -69,10 +82,8 @@ public sealed class TransferEngine
                         // Check pause before writing each segment
                         await pauseToken.WaitWhilePausedAsync(cancellationToken);
 
-                        if (rateLimiter != null)
-                        {
-                            await rateLimiter.ConsumeAsync(segment.Length, cancellationToken);
-                        }
+                        // Apply global rate limiting (Zero-GC, SpinWait-based)
+                        globalRateLimiter?.Consume(segment.Length, cancellationToken);
 
                         await writer.WriteAsync(segment, cancellationToken);
                         copiedBytes += segment.Length;

@@ -1,70 +1,203 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace FastCopy.Core;
 
-internal sealed class TokenBucket
+/// <summary>
+/// Global rate limiter using token bucket algorithm with Zero-GC design.
+/// Thread-safe using Interlocked operations only. Supports dynamic limit changes.
+/// </summary>
+public sealed class TokenBucket
 {
-    private readonly long _maxTokens;
-    private readonly long _refillRate; // Tokens per second
-    private double _tokens;
+    // Scale factor for fractional token precision (tokens stored as fixed-point: actualTokens * SCALE)
+    private const long SCALE = 1000;
+    
+    // Bypass mode: if limit is 0, completely skip rate limiting
+    private long _bypassMode; // 0 = rate limit, 1 = bypass
+    
+    // Token state (scaled by SCALE for precision)
+    private long _scaledTokens;
+    private long _scaledMaxTokens;
+    private long _scaledRefillRate; // Scaled tokens per second
+    
+    // Timing for refills
     private long _lastRefillTick;
-    private readonly object _lock = new();
+    
+    // For SpinWait calibration
+    private static readonly long TicksPerMicrosecond = Stopwatch.Frequency / 1_000_000;
 
     public TokenBucket(long bytesPerSecond)
     {
-        if (bytesPerSecond <= 0) throw new ArgumentOutOfRangeException(nameof(bytesPerSecond));
-        _maxTokens = bytesPerSecond; 
-        _refillRate = bytesPerSecond;
-        _tokens = _maxTokens;
+        if (bytesPerSecond < 0) throw new ArgumentOutOfRangeException(nameof(bytesPerSecond));
+        
+        if (bytesPerSecond == 0)
+        {
+            // Bypass mode - no rate limiting
+            _bypassMode = 1;
+            _scaledMaxTokens = 0;
+            _scaledRefillRate = 0;
+            _scaledTokens = 0;
+        }
+        else
+        {
+            _bypassMode = 0;
+            _scaledMaxTokens = bytesPerSecond * SCALE;
+            _scaledRefillRate = bytesPerSecond * SCALE;
+            _scaledTokens = _scaledMaxTokens; // Start with full bucket
+        }
+        
         _lastRefillTick = Stopwatch.GetTimestamp();
     }
 
-    public async ValueTask ConsumeAsync(long count, CancellationToken cancellationToken)
+    /// <summary>
+    /// Change the rate limit dynamically while the application is running.
+    /// </summary>
+    /// <param name="newBytesPerSecond">New limit in bytes/second. 0 = unlimited (bypass mode).</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ChangeLimit(long newBytesPerSecond)
     {
-        while (count > 0)
+        if (newBytesPerSecond < 0) throw new ArgumentOutOfRangeException(nameof(newBytesPerSecond));
+        
+        if (newBytesPerSecond == 0)
         {
-            long waitMs = 0;
+            // Enable bypass mode
+            Interlocked.Exchange(ref _bypassMode, 1);
+            Interlocked.Exchange(ref _scaledMaxTokens, 0);
+            Interlocked.Exchange(ref _scaledRefillRate, 0);
+        }
+        else
+        {
+            // Disable bypass mode and set new limits
+            long newScaledMax = newBytesPerSecond * SCALE;
+            long newScaledRate = newBytesPerSecond * SCALE;
             
-            lock (_lock)
+            Interlocked.Exchange(ref _scaledMaxTokens, newScaledMax);
+            Interlocked.Exchange(ref _scaledRefillRate, newScaledRate);
+            
+            // Cap current tokens to new max if necessary
+            long currentTokens = Interlocked.Read(ref _scaledTokens);
+            if (currentTokens > newScaledMax)
             {
-                Refill();
-
-                if (_tokens >= count)
-                {
-                    _tokens -= count;
-                    return;
-                }
-
-                // Not enough tokens, calculate wait
-                double deficit = count - _tokens;
-                double secondsToWait = deficit / _refillRate;
-                waitMs = (long)(secondsToWait * 1000);
-                
-                // If wait is too long (e.g. > 100ms), we can just take what's available and wait for the rest in next iteration?
-                // But simplified: just wait.
-                // However, if we wait, we must not consume tokens yet.
-                // Actually, standard token bucket consumes what's available or waits.
-                // To minimize wakeups, we wait until we have enough for the whole chunk? 
-                // Or at least a reasonable chunk.
-                // Given standard segments are 4KB, waiting for 4KB at 1MB/s is 4ms.
-                
-                if (waitMs == 0) waitMs = 1; // Minimum wait
+                Interlocked.Exchange(ref _scaledTokens, newScaledMax);
             }
-
-            await Task.Delay((int)waitMs, cancellationToken);
+            
+            // Ensure bypass is disabled last
+            Interlocked.Exchange(ref _bypassMode, 0);
         }
     }
 
+    /// <summary>
+    /// Attempt to consume tokens from the bucket. Blocks using SpinWait if insufficient tokens.
+    /// Zero-GC design: uses Interlocked operations and SpinWait instead of locks or Task.Delay.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Consume(long bytes, CancellationToken cancellationToken)
+    {
+        // Fast path: bypass mode
+        if (Interlocked.Read(ref _bypassMode) == 1)
+        {
+            return;
+        }
+
+        long scaledBytes = bytes * SCALE;
+        var spinner = new SpinWait();
+        
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            
+            // Refill tokens based on elapsed time
+            Refill();
+            
+            // Try to consume tokens
+            long currentTokens = Interlocked.Read(ref _scaledTokens);
+            
+            if (currentTokens >= scaledBytes)
+            {
+                // Attempt to atomically subtract tokens
+                long newTokens = Interlocked.Add(ref _scaledTokens, -scaledBytes);
+                
+                // Check if we went negative (another thread consumed first)
+                if (newTokens >= 0)
+                {
+                    // Success!
+                    return;
+                }
+                else
+                {
+                    // We went negative, add back and retry
+                    Interlocked.Add(ref _scaledTokens, scaledBytes);
+                }
+            }
+            
+            // Not enough tokens, spin wait
+            // For large deficits, yield to other threads more aggressively
+            if (currentTokens < scaledBytes / 2)
+            {
+                spinner.SpinOnce(sleep1Threshold: 10);
+            }
+            else
+            {
+                spinner.SpinOnce(sleep1Threshold: 50);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Refill the token bucket based on elapsed time since last refill.
+    /// Uses Interlocked operations for thread-safe, lock-free refills.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void Refill()
     {
         long now = Stopwatch.GetTimestamp();
-        double elapsedSeconds = (double)(now - _lastRefillTick) / Stopwatch.Frequency;
+        long lastTick = Interlocked.Read(ref _lastRefillTick);
         
-        if (elapsedSeconds > 0)
+        // Calculate elapsed time
+        long elapsedTicks = now - lastTick;
+        
+        if (elapsedTicks <= 0)
         {
-            double newTokens = elapsedSeconds * _refillRate;
-            _tokens = Math.Min(_maxTokens, _tokens + newTokens);
-            _lastRefillTick = now;
+            return;
+        }
+        
+        // Try to claim this refill period
+        if (Interlocked.CompareExchange(ref _lastRefillTick, now, lastTick) != lastTick)
+        {
+            // Another thread already updated, skip this refill
+            return;
+        }
+        
+        // Calculate tokens to add (scaled)
+        long refillRate = Interlocked.Read(ref _scaledRefillRate);
+        long tokensToAdd = (elapsedTicks * refillRate) / Stopwatch.Frequency;
+        
+        if (tokensToAdd <= 0)
+        {
+            return;
+        }
+        
+        // Add tokens, but cap at max
+        long maxTokens = Interlocked.Read(ref _scaledMaxTokens);
+        
+        while (true)
+        {
+            long currentTokens = Interlocked.Read(ref _scaledTokens);
+            long newTokens = Math.Min(maxTokens, currentTokens + tokensToAdd);
+            
+            if (newTokens == currentTokens)
+            {
+                // Already at max
+                break;
+            }
+            
+            if (Interlocked.CompareExchange(ref _scaledTokens, newTokens, currentTokens) == currentTokens)
+            {
+                // Successfully updated
+                break;
+            }
+            
+            // Another thread modified, retry
         }
     }
 }

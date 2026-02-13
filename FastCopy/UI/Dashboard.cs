@@ -10,14 +10,22 @@ public sealed class Dashboard : Window
     private ProgressBar _globalProgressBar = null!;
     private Label _globalStatusLabel = null!;
     private Label _footerLabel = null!;
+    private Label _resourceStatsLabel = null!;
     private readonly List<TransferItem> _items;
     private readonly PauseTokenSource _pauseTokenSource;
+    private readonly ResourceWatchdog? _resourceWatchdog;
     private bool _quietMode = false;
+    private bool _showUI = true;
     private Timer? _updateTimer;
+    private Timer? _consoleTimer;
+    private Timer? _resourceTimer;
+    private DateTime _lastConsoleUpdate = DateTime.MinValue;
 
-    public Dashboard()
+    public Dashboard(bool showUI = true, ResourceWatchdog? resourceWatchdog = null)
     {
         Title = "FastCopy Dashboard (V2)";
+        _showUI = showUI;
+        _resourceWatchdog = resourceWatchdog;
         
         // Initialize data
         _items = GenerateMockData(10000);
@@ -26,6 +34,7 @@ public sealed class Dashboard : Window
         // Setup Views
         SetupDetailedView();
         SetupQuietView();
+        SetupResourceStats();
         SetupFooter();
 
         // Key Bindings
@@ -45,6 +54,11 @@ public sealed class Dashboard : Window
                 ToggleView();
                 e.Handled = true;
             }
+            else if (e == Key.H) // Toggle UI Display (Headless)
+            {
+                ToggleUIDisplay();
+                e.Handled = true;
+            }
         };
 
         // Start update timer (simulating 10 updates per second)
@@ -52,22 +66,61 @@ public sealed class Dashboard : Window
         {
             if (_pauseTokenSource.IsPaused) return;
 
-            // Update UI on main thread
-            Application.Invoke(() =>
+            // Update UI on main thread only if UI is shown
+            if (_showUI)
             {
-                UpdateMockProgress();
-                if (_quietMode)
+                Application.Invoke(() =>
                 {
-                    UpdateGlobalProgress();
-                }
-                SetNeedsDraw();
-            });
+                    UpdateMockProgress();
+                    if (_quietMode)
+                    {
+                        UpdateGlobalProgress();
+                    }
+                    SetNeedsDraw();
+                });
+            }
+            else
+            {
+                // In headless mode, just update the data without UI refresh
+                UpdateMockProgress();
+            }
         }, null, 0, 100);
+        
+        // Start console timer for headless mode (every 5 seconds)
+        _consoleTimer = new Timer(_ =>
+        {
+            if (!_showUI && !_pauseTokenSource.IsPaused)
+            {
+                OutputConsoleStatus();
+            }
+        }, null, 0, 5000);
+        
+        // Start resource stats timer (every 500ms)
+        if (_resourceWatchdog != null)
+        {
+            _resourceTimer = new Timer(_ =>
+            {
+                if (_showUI)
+                {
+                    Application.Invoke(() =>
+                    {
+                        UpdateResourceStats();
+                        SetNeedsDraw();
+                    });
+                }
+                else
+                {
+                    UpdateResourceStats();
+                }
+            }, null, 0, 500);
+        }
     }
 
     protected override void Dispose(bool disposing)
     {
         _updateTimer?.Dispose();
+        _consoleTimer?.Dispose();
+        _resourceTimer?.Dispose();
         base.Dispose(disposing);
     }
 
@@ -133,6 +186,37 @@ public sealed class Dashboard : Window
         Add(_globalStatusLabel, _globalProgressBar);
     }
 
+    private void SetupResourceStats()
+    {
+        _resourceStatsLabel = new Label
+        {
+            X = 0,
+            Y = Pos.AnchorEnd(2),
+            Width = Dim.Fill(),
+            Height = 1,
+            Text = "Resource Monitor: Not available",
+            ColorScheme = Colors.ColorSchemes["Base"]
+        };
+        Add(_resourceStatsLabel);
+    }
+
+    private void UpdateResourceStats()
+    {
+        if (_resourceWatchdog == null)
+        {
+            _resourceStatsLabel.Text = "Resource Monitor: Disabled";
+            return;
+        }
+
+        var stats = _resourceWatchdog.LatestStats;
+        string throttleIndicator = stats.IsThrottled ? " [THROTTLED]" : "";
+        string maxMemText = stats.MaxMemoryMB > 0 ? $" / {stats.MaxMemoryMB:F0} MB" : "";
+        
+        _resourceStatsLabel.Text = $" Memory: {stats.MemoryUsageMB:F1} MB{maxMemText} | " +
+                                   $"CPU: {stats.CpuUsagePercent:F1}% | " +
+                                   $"Threads: {stats.CurrentThreadLimit}{throttleIndicator}";
+    }
+
     private void SetupFooter()
     {
         _footerLabel = new Label
@@ -141,7 +225,7 @@ public sealed class Dashboard : Window
             Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(),
             Height = 1,
-            Text = " [P] Pause/Resume  [T] Toggle Stats | Status: Running",
+            Text = " [P] Pause/Resume  [T] Toggle Stats  [H] Hide UI | Status: Running",
             ColorScheme = Colors.ColorSchemes["Menu"]
         };
         Add(_footerLabel);
@@ -195,7 +279,7 @@ public sealed class Dashboard : Window
 
     private void UpdateStatus(string status)
     {
-        _footerLabel.Text = $" [P] Pause/Resume  [T] Toggle Stats | Status: {status}";
+        _footerLabel.Text = $" [P] Pause/Resume  [T] Toggle Stats  [H] Hide UI | Status: {status}";
     }
 
     private void UpdateGlobalProgress()
@@ -205,6 +289,62 @@ public sealed class Dashboard : Window
         double totalProgress = _items.Average(i => i.Progress);
         _globalProgressBar.Fraction = (float)totalProgress;
         _globalStatusLabel.Text = $"Total Progress: {totalProgress:P1}";
+    }
+
+    private void ToggleUIDisplay()
+    {
+        _showUI = !_showUI;
+        
+        if (!_showUI)
+        {
+            // Hide all UI elements to save CPU cycles
+            _tableView.Visible = false;
+            _globalProgressBar.Visible = false;
+            _globalStatusLabel.Visible = false;
+            _footerLabel.Text = " UI HIDDEN - Press [H] to show UI again";
+            UpdateStatus("Hidden (Press H to show)");
+        }
+        else
+        {
+            // Show UI elements again
+            if (_quietMode)
+            {
+                _globalProgressBar.Visible = true;
+                _globalStatusLabel.Visible = true;
+            }
+            else
+            {
+                _tableView.Visible = true;
+            }
+            
+            UpdateStatus(_pauseTokenSource.IsPaused ? "Paused" : "Running");
+        }
+        
+        SetNeedsDraw();
+    }
+
+    private void OutputConsoleStatus()
+    {
+        if (_items.Count == 0) return;
+        
+        int completed = _items.Count(i => i.Status == "Completed");
+        int copying = _items.Count(i => i.Status == "Copying");
+        int paused = _items.Count(i => i.Status == "Paused");
+        double avgProgress = _items.Average(i => i.Progress);
+        double avgSpeed = _items.Where(i => i.Status == "Copying").DefaultIfEmpty(new TransferItem()).Average(i => i.Speed);
+        
+        var timestamp = DateTime.Now.ToString("HH:mm:ss");
+        var statusLine = $"[{timestamp}] Progress: {avgProgress:P1} | Copying: {copying} | Completed: {completed} | Paused: {paused} | Avg Speed: {avgSpeed:F1} MB/s";
+        
+        // Add resource stats if watchdog is available
+        if (_resourceWatchdog != null)
+        {
+            var stats = _resourceWatchdog.LatestStats;
+            string throttleIndicator = stats.IsThrottled ? " [THROTTLED]" : "";
+            statusLine += $" | RAM: {stats.MemoryUsageMB:F1} MB | CPU: {stats.CpuUsagePercent:F1}% | Threads: {stats.CurrentThreadLimit}{throttleIndicator}";
+        }
+        
+        Console.WriteLine(statusLine);
     }
 
     private List<TransferItem> GenerateMockData(int count)

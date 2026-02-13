@@ -11,12 +11,31 @@ public sealed class WorkerPool
     private readonly TransferEngine _transferEngine;
     private readonly DeadLetterStore _deadLetterStore;
     private readonly RecoveryService _recoveryService;
+    private readonly TokenBucket? _globalRateLimiter;
+    private readonly ResourceWatchdog? _resourceWatchdog;
+    private int _activeWorkerCount;
 
-    public WorkerPool(TransferEngine transferEngine, DeadLetterStore deadLetterStore, RecoveryService recoveryService)
+    /// <summary>
+    /// Creates a new WorkerPool for managing parallel file transfers.
+    /// </summary>
+    /// <param name="transferEngine">Engine for performing file copies</param>
+    /// <param name="deadLetterStore">Store for failed jobs</param>
+    /// <param name="recoveryService">Service for logging and recovering failed jobs</param>
+    /// <param name="globalRateLimiter">Optional global rate limiter shared across all workers. Pass null for unlimited speed.</param>
+    /// <param name="resourceWatchdog">Optional resource watchdog for dynamic thread limiting based on memory pressure.</param>
+    public WorkerPool(
+        TransferEngine transferEngine, 
+        DeadLetterStore deadLetterStore, 
+        RecoveryService recoveryService,
+        TokenBucket? globalRateLimiter = null,
+        ResourceWatchdog? resourceWatchdog = null)
     {
         _transferEngine = transferEngine;
         _deadLetterStore = deadLetterStore;
         _recoveryService = recoveryService;
+        _globalRateLimiter = globalRateLimiter;
+        _resourceWatchdog = resourceWatchdog;
+        _activeWorkerCount = 0;
     }
 
     public async Task StartConsumersAsync(
@@ -40,6 +59,18 @@ public sealed class WorkerPool
             },
             async (job, ct) =>
             {
+                // Respect dynamic thread limit from ResourceWatchdog
+                if (_resourceWatchdog != null)
+                {
+                    while (Interlocked.CompareExchange(ref _activeWorkerCount, 0, 0) >= _resourceWatchdog.CurrentThreadLimit)
+                    {
+                        // Wait briefly if we're at or above the dynamic limit
+                        await Task.Delay(50, ct);
+                    }
+                }
+
+                Interlocked.Increment(ref _activeWorkerCount);
+                
                 await ioSemaphore.WaitAsync(ct);
                 try
                 {
@@ -66,7 +97,7 @@ public sealed class WorkerPool
                             await _transferEngine.CopyFileAsync(
                                 job.Source,
                                 job.Destination,
-                                null, // No rate limit enforced here
+                                _globalRateLimiter, // Use global rate limiter shared across all workers
                                 pauseToken,
                                 (progress) =>
                                 {
@@ -141,6 +172,7 @@ public sealed class WorkerPool
                     activeTransfers.TryRemove(job.Source, out _);
                     
                     ioSemaphore.Release();
+                    Interlocked.Decrement(ref _activeWorkerCount);
                 }
             });
     }
