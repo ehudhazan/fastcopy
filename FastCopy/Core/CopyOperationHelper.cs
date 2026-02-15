@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using FastCopy.Processors;
 using FastCopy.Services;
+using FastCopy.UI;
+using Spectre.Console;
 
 namespace FastCopy.Core;
 
@@ -89,7 +91,7 @@ public static class CopyOperationHelper
         {
             await ExecuteStandardCopyAsync(
                 src, dst, verify, dryRun, delete, rateLimitBytesPerSec,
-                maxMemMB ?? 0, parallel, retries, onComplete, cancellationToken);
+                maxMemMB ?? 0, parallel, retries, quiet, onComplete, cancellationToken);
             return;
         }
 
@@ -159,6 +161,7 @@ public static class CopyOperationHelper
         var transferEngine = new TransferEngine();
         var recoveryService = new RecoveryService();
         var deadLetterStore = new DeadLetterStore();
+        var pauseTokenSource = new PauseTokenSource();
         
         TokenBucket? rateLimiter = rateLimitBytesPerSec > 0
             ? TransferEngine.GetGlobalRateLimiter()
@@ -180,13 +183,15 @@ public static class CopyOperationHelper
         var channel = Channel.CreateUnbounded<CopyJob>();
         var activeTransfers = new ConcurrentDictionary<string, ActiveTransfer>();
 
-        // Start workers
+        // Start workers with pause support
+        var pauseToken = new PauseToken(pauseTokenSource);
         var workerTask = workerPool.StartConsumersAsync(
             channel.Reader,
             maxParallelism: parallel,
             activeTransfers,
             maxRetries: retries,
             stopOnError: false,
+            pauseToken: pauseToken,
             cancellationToken: cancellationToken);
 
         // Stream jobs from JSONL file
@@ -203,8 +208,8 @@ public static class CopyOperationHelper
             channel.Writer.Complete();
         }
 
-        // Wait for all workers to complete
-        await workerTask;
+        // Launch interactive dashboard for retry operations
+        await RunWithInteractiveDashboardAsync(workerTask, activeTransfers, pauseTokenSource, cancellationToken);
 
         // Cleanup
         await recoveryService.DisposeAsync();
@@ -223,6 +228,7 @@ public static class CopyOperationHelper
         long maxMemMB,
         int parallel,
         int retries,
+        bool quiet,
         string? onComplete,
         CancellationToken cancellationToken)
     {
@@ -240,6 +246,7 @@ public static class CopyOperationHelper
         var transferEngine = new TransferEngine();
         var recoveryService = new RecoveryService();
         var deadLetterStore = new DeadLetterStore();
+        var pauseTokenSource = new PauseTokenSource();
         
         TokenBucket? rateLimiter = rateLimitBytesPerSec > 0
             ? TransferEngine.GetGlobalRateLimiter()
@@ -261,13 +268,15 @@ public static class CopyOperationHelper
         var channel = Channel.CreateUnbounded<CopyJob>();
         var activeTransfers = new ConcurrentDictionary<string, ActiveTransfer>();
 
-        // Start workers
+        // Start workers with pause token support
+        var pauseToken = new PauseToken(pauseTokenSource);
         var workerTask = workerPool.StartConsumersAsync(
             channel.Reader,
             maxParallelism: parallel,
             activeTransfers,
             maxRetries: retries,
             stopOnError: false,
+            pauseToken: pauseToken,
             cancellationToken: cancellationToken);
 
         // Queue the copy job(s)
@@ -308,8 +317,16 @@ public static class CopyOperationHelper
             channel.Writer.Complete();
         }
 
-        // Wait for all workers to complete
-        await workerTask;
+        // Launch Interactive Dashboard if not in quiet mode
+        if (!quiet)
+        {
+            await RunWithInteractiveDashboardAsync(workerTask, activeTransfers, pauseTokenSource, cancellationToken);
+        }
+        else
+        {
+            // Quiet mode: just wait for workers to complete
+            await workerTask;
+        }
 
         // Cleanup
         await recoveryService.DisposeAsync();
@@ -375,6 +392,106 @@ public static class CopyOperationHelper
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Error executing on-complete command: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Run the interactive Spectre.Console TUI dashboard with keyboard controls.
+    /// The dashboard allows real-time control: pause/resume, speed adjustment, visibility toggle.
+    /// </summary>
+    private static async Task RunWithInteractiveDashboardAsync(
+        Task workerTask,
+        ConcurrentDictionary<string, ActiveTransfer> activeTransfers,
+        PauseTokenSource pauseTokenSource,
+        CancellationToken cancellationToken)
+    {
+        // Create ViewModel and Interactive Dashboard
+        var viewModel = new DashboardViewModel();
+        using var dashboard = new InteractiveDashboard(viewModel, pauseTokenSource);
+
+        // Define the stats update function
+        async Task UpdateWorkerStatsAsync(CancellationToken ct)
+        {
+            // Build snapshot of current state
+            var workers = new List<WorkerState>();
+            long totalTransferred = 0;
+            long totalBytes = 0;
+            int completedCount = 0;
+            int copyingCount = 0;
+            int failedCount = 0;
+            double totalSpeed = 0;
+
+            foreach (var kvp in activeTransfers)
+            {
+                var transfer = kvp.Value;
+                var workerState = new WorkerState
+                {
+                    FileName = Path.GetFileName(transfer.Source),
+                    Status = transfer.Status,
+                    Progress = transfer.TotalBytes > 0 
+                        ? (double)transfer.BytesTransferred / transfer.TotalBytes * 100.0 
+                        : 0.0,
+                    Speed = transfer.BytesPerSecond,
+                    BytesTransferred = transfer.BytesTransferred,
+                    TotalBytes = transfer.TotalBytes
+                };
+
+                workers.Add(workerState);
+                totalTransferred += transfer.BytesTransferred;
+                totalBytes += transfer.TotalBytes;
+
+                if (transfer.Status == "Completed")
+                    completedCount++;
+                else if (transfer.Status == "Copying")
+                {
+                    copyingCount++;
+                    totalSpeed += transfer.BytesPerSecond;
+                }
+                else if (transfer.Status == "Failed")
+                    failedCount++;
+            }
+
+            // Update ViewModel
+            double globalProgress = totalBytes > 0 ? (double)totalTransferred / totalBytes : 0.0;
+            var stats = new TransferStats(
+                workers: workers.ToArray(),
+                globalSpeed: totalSpeed,
+                progress: globalProgress,
+                statusMessage: pauseTokenSource.IsPaused 
+                    ? $"⏸ Paused | Copying: {copyingCount} | Done: {completedCount} | Failed: {failedCount}"
+                    : $"▶ Copying: {copyingCount} | Done: {completedCount} | Failed: {failedCount}",
+                totalBytesTransferred: totalTransferred,
+                totalBytes: totalBytes,
+                completedCount: completedCount,
+                failedCount: failedCount,
+                isPaused: pauseTokenSource.IsPaused);
+
+            viewModel.UpdateStats(stats);
+
+            // Check if workers are done
+            if (workerTask.IsCompleted)
+            {
+                // Allow dashboard to exit gracefully
+                await Task.Delay(2000, ct);
+                return;
+            }
+        }
+
+        // Run the interactive dashboard
+        await dashboard.RunAsync(UpdateWorkerStatsAsync, cancellationToken);
+
+        // Wait for workers to complete if dashboard exited first
+        if (!workerTask.IsCompleted)
+        {
+            Console.WriteLine("Waiting for transfers to complete...");
+            try
+            {
+                await workerTask.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            }
+            catch
+            {
+                Console.WriteLine("Warning: Some transfers may still be in progress.");
+            }
         }
     }
 }

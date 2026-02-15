@@ -13,8 +13,8 @@
     <StackTraceSupport>false</StackTraceSupport>
     <InvariantGlobalization>true</InvariantGlobalization>
     
-    <!-- Suppress Terminal.Gui AOT compatibility warnings (not fully AOT compatible yet) -->
-    <NoWarn>$(NoWarn);IL2026;IL3050;IL2104;IL3053;NETSDK1194</NoWarn>
+    <!-- Suppress known AOT warnings (solution-level) -->
+    <NoWarn>$(NoWarn);NETSDK1194</NoWarn>
     
     <!-- Trimming Configuration for Size Optimization -->
     <TrimMode>link</TrimMode>
@@ -44,9 +44,11 @@
     <PackageReference Include="KubernetesClient" Version="18.0.13" />
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.3" />
-    <PackageReference Include="Terminal.Gui" Version="2.0.0-alpha.*" />
     <PackageReference Include="SSH.NET" Version="2025.1.0" />
     <PackageReference Include="ZstdSharp.Port" Version="0.8.*" />
+    
+    <!-- Spectre.Console TUI - NativeAOT compatible -->
+    <PackageReference Include="Spectre.Console" Version="0.49.*" />
   </ItemGroup>
 
   <ItemGroup>

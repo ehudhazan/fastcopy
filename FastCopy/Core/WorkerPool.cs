@@ -14,6 +14,13 @@ public sealed class WorkerPool
     private readonly TokenBucket? _globalRateLimiter;
     private readonly ResourceWatchdog? _resourceWatchdog;
     private int _activeWorkerCount;
+    private int _currentParallelism;
+
+    /// <summary>
+    /// Gets the current parallelism setting.
+    /// Note: This returns the configured value, not the actual active worker count.
+    /// </summary>
+    public int CurrentParallelism => _currentParallelism;
 
     /// <summary>
     /// Creates a new WorkerPool for managing parallel file transfers.
@@ -36,6 +43,41 @@ public sealed class WorkerPool
         _globalRateLimiter = globalRateLimiter;
         _resourceWatchdog = resourceWatchdog;
         _activeWorkerCount = 0;
+        _currentParallelism = Environment.ProcessorCount; // Default
+    }
+
+    /// <summary>
+    /// Adjust the parallelism setting by a delta value.
+    /// Note: This updates the tracked value, but cannot dynamically change
+    /// an already-running StartConsumersAsync operation. For full dynamic
+    /// control, use ResourceWatchdog.
+    /// </summary>
+    /// <param name="delta">Amount to adjust (positive or negative)</param>
+    public void AdjustParallelism(int delta)
+    {
+        int newValue = Math.Clamp(_currentParallelism + delta, 1, 128);
+        Interlocked.Exchange(ref _currentParallelism, newValue);
+        
+        // If using ResourceWatchdog, update its thread limit
+        if (_resourceWatchdog != null)
+        {
+            _resourceWatchdog.SetThreadLimit(newValue);
+        }
+    }
+
+    /// <summary>
+    /// Set the parallelism to a specific value.
+    /// </summary>
+    /// <param name="value">New parallelism value (1-128)</param>
+    public void SetParallelism(int value)
+    {
+        int newValue = Math.Clamp(value, 1, 128);
+        Interlocked.Exchange(ref _currentParallelism, newValue);
+        
+        if (_resourceWatchdog != null)
+        {
+            _resourceWatchdog.SetThreadLimit(newValue);
+        }
     }
 
     public async Task StartConsumersAsync(
@@ -47,6 +89,9 @@ public sealed class WorkerPool
         PauseToken pauseToken = default,
         CancellationToken cancellationToken = default)
     {
+        // Store the parallelism setting
+        SetParallelism(maxParallelism);
+        
         // Use a SemaphoreSlim to strictly limit active Disk IO tasks.
         using var ioSemaphore = new SemaphoreSlim(maxParallelism);
 

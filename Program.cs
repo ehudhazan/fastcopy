@@ -13,7 +13,6 @@ dotnet publish FastCopy.csproj -r linux-musl-x64 -c Release -p:PublishAot=true -
 
 using FastCopy.Processors;
 using FastCopy.Services;
-using Terminal.Gui;
 using FastCopy.UI;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,9 +22,9 @@ using System.Diagnostics;
 using FastCopy.Core;
 using System.CommandLine;
 using System.Threading.Channels;
-
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using Spectre.Console;
 
 if (Avx2.IsSupported)
 {
@@ -39,6 +38,21 @@ else
 {
     Console.WriteLine("Hardware Acceleration: Not Supported (Fallback to Scalar)");
 }
+
+// Demo mode for showcasing the Spectre.Console TUI dashboard
+if (args.Contains("--demo-dashboard"))
+{
+    var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (s, e) =>
+    {
+        e.Cancel = true;
+        cts.Cancel();
+    };
+    
+    await RunSpectreConsoleDashboardDemoAsync(cts.Token);
+    return;
+}
+
 if (args.Contains("--serve"))
 {
     var builder = WebApplication.CreateSlimBuilder(args);
@@ -72,78 +86,8 @@ if (args.Contains("--serve"))
 // Smart Fallback: If no arguments provided, launch interactive menu
 if (args.Length == 0)
 {
-    // Check if we're running in an AOT-compiled environment
-    // In AOT builds, reflection is limited and Terminal.Gui TUI may not work properly
-    bool isAotCompiled = !System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported;
-    
-    if (isAotCompiled)
-    {
-        // AOT builds require command-line arguments
-        Console.WriteLine("FastCopy - High-performance file copy utility");
-        Console.WriteLine();
-        Console.WriteLine("No arguments provided. This AOT-compiled build requires command-line arguments.");
-        Console.WriteLine();
-        Console.WriteLine("Quick start:");
-        Console.WriteLine("  fastcopy --src /source/path --dst /destination/path");
-        Console.WriteLine("  fastcopy --file-list myfiles.txt --limit 100MB --parallel 8");
-        Console.WriteLine();
-        Console.WriteLine("Run 'fastcopy --help' for full list of options.");
-        return;
-    }
-    
-    try
-    {
-#pragma warning disable IL2026, IL3050
-        // Initialize Terminal.Gui for interactive mode (non-AOT only)
-        Application.Init();
-        var menu = InteractiveMenu.Run();
-        Application.Shutdown();
-#pragma warning restore IL2026, IL3050
-        
-        if (menu == null)
-        {
-            Console.WriteLine("Operation cancelled by user.");
-            return;
-        }
-        
-        // Convert interactive menu settings to CLI arguments
-        var argsList = new List<string>
-        {
-            "--src", menu.Source,
-            "--dst", menu.Destination,
-            "--retries", menu.Retries.ToString()
-        };
-        
-        if (menu.Verify)
-            argsList.Add("--verify");
-        
-        if (menu.DryRun)
-            argsList.Add("--dry-run");
-        
-        if (menu.Delete)
-            argsList.Add("--delete");
-        
-        if (menu.SpeedLimitBytesPerSec > 0)
-        {
-            argsList.Add("--limit");
-            argsList.Add(menu.SpeedLimitBytesPerSec.ToString());
-        }
-        
-        if (!string.IsNullOrWhiteSpace(menu.OnComplete))
-        {
-            argsList.Add("--on-complete");
-            argsList.Add(menu.OnComplete);
-        }
-        
-        args = argsList.ToArray();
-    }
-    catch (Exception ex)
-    {
-        // If TUI fails, show helpful error
-        Console.WriteLine($"Error: Failed to launch interactive menu: {ex.Message}");
-        Console.WriteLine("Please run with --help to see available options.");
-        return;
-    }
+    await RunInteractiveMenuAsync();
+    return;
 }
 
 // Build System.CommandLine configuration
@@ -255,6 +199,52 @@ rootCommand.SetHandler(async (context) =>
 
 await rootCommand.InvokeAsync(args);
 
+/// <summary>
+/// Run the interactive menu for configuring and launching a copy operation.
+/// Native Console-based UI with Zero-GC rendering.
+/// </summary>
+static async Task RunInteractiveMenuAsync()
+{
+    using var consoleInterface = new ConsoleInterface();
+    
+    var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (s, e) =>
+    {
+        e.Cancel = true;
+        cts.Cancel();
+    };
+    
+    // Launch menu
+    await consoleInterface.RunMenuAsync(cts.Token);
+    
+    // Check if user wants to start a copy
+    var menuState = consoleInterface.GetMenuState();
+    
+    if (menuState.ShouldStart && !string.IsNullOrEmpty(menuState.SourcePath) && !string.IsNullOrEmpty(menuState.DestinationPath))
+    {
+        // Parse speed limit
+        string? limitStr = menuState.SpeedLimitText == "Unlimited" ? null : menuState.SpeedLimitText;
+        
+        // Execute the copy operation
+        await CopyOperationHelper.ExecuteAsync(
+            src: menuState.SourcePath,
+            dst: menuState.DestinationPath,
+            limitStr: limitStr,
+            verify: menuState.VerifyChecksum,
+            dryRun: false,
+            delete: false,
+            onComplete: null,
+            retries: 2,
+            quiet: false,
+            retryFailed: null,
+            maxMemMB: null,
+            lowPriority: false,
+            fileListPath: null,
+            parallel: menuState.MaxParallelism,
+            cancellationToken: cts.Token);
+    }
+}
+
 static async Task ExecuteFastCopyAsync(
     string? src,
     string? dst,
@@ -275,5 +265,95 @@ static async Task ExecuteFastCopyAsync(
     await CopyOperationHelper.ExecuteAsync(
         src, dst, limitStr, verify, dryRun, delete, onComplete, retries, quiet,
         retryFailed, maxMemMB, lowPriority, fileListPath, parallel, cancellationToken);
+}
+
+/// <summary>
+/// Demo mode showcasing the Spectre.Console Interactive TUI dashboard with NativeAOT support.
+/// </summary>
+static async Task RunSpectreConsoleDashboardDemoAsync(CancellationToken cancellationToken)
+{
+    // Create ViewModel and pause token source
+    var viewModel = new DashboardViewModel();
+    var pauseTokenSource = new PauseTokenSource();
+    
+    // Create mock workers for demo
+    var mockWorkers = new List<WorkerState>();
+    for (int i = 0; i < 15; i++)
+    {
+        mockWorkers.Add(new WorkerState
+        {
+            FileName = $"large_file_{i:D4}.dat",
+            Status = "Copying",
+            Progress = 0.0,
+            Speed = 0.0,
+            BytesTransferred = 0,
+            TotalBytes = (long)(100 * 1024 * 1024 * (1 + i * 0.3)) // Varying sizes
+        });
+    }
+
+    // Set a demo speed limit
+    TransferEngine.SetGlobalLimit(50L * 1024 * 1024); // 50 MB/s initial
+
+    // Create interactive dashboard
+    using var dashboard = new InteractiveDashboard(viewModel, pauseTokenSource);
+
+    Console.WriteLine("Starting Interactive Dashboard Demo...");
+    Console.WriteLine("Try the controls: P=Pause, H=Hide, +/-=Speed, U=Unlimited, R=Reset, Q=Quit");
+    await Task.Delay(2000, cancellationToken);
+
+    // Define the update function for mock data
+    async Task UpdateMockDataAsync(CancellationToken ct)
+    {
+        var random = new Random();
+        
+        // Update mock workers
+        foreach (var worker in mockWorkers)
+        {
+            // Only update if not paused
+            if (worker.Status == "Copying" && !pauseTokenSource.IsPaused)
+            {
+                worker.BytesTransferred = Math.Min(
+                    worker.BytesTransferred + random.Next(1, 10) * 1024 * 1024,
+                    worker.TotalBytes);
+                worker.Progress = (double)worker.BytesTransferred / worker.TotalBytes * 100.0;
+                worker.Speed = random.Next(10, 150) * 1024 * 1024;
+
+                if (worker.BytesTransferred >= worker.TotalBytes)
+                {
+                    worker.Status = "Completed";
+                    worker.Speed = 0;
+                }
+            }
+        }
+
+        // Calculate global stats
+        long totalTransferred = mockWorkers.Sum(w => w.BytesTransferred);
+        long totalBytes = mockWorkers.Sum(w => w.TotalBytes);
+        double globalProgress = totalBytes > 0 ? (double)totalTransferred / totalBytes : 0.0;
+        double globalSpeed = mockWorkers.Where(w => w.Status == "Copying").Sum(w => w.Speed);
+        int completedCount = mockWorkers.Count(w => w.Status == "Completed");
+        int copyingCount = mockWorkers.Count(w => w.Status == "Copying");
+
+        // Update ViewModel
+        var stats = new TransferStats(
+            workers: mockWorkers.ToArray(),
+            globalSpeed: globalSpeed,
+            progress: globalProgress,
+            statusMessage: pauseTokenSource.IsPaused
+                ? $"⏸ Paused (Demo) | Copying: {copyingCount} | Done: {completedCount}/{mockWorkers.Count}"
+                : $"▶ Demo Mode | Copying: {copyingCount} | Done: {completedCount}/{mockWorkers.Count}",
+            totalBytesTransferred: totalTransferred,
+            totalBytes: totalBytes,
+            completedCount: completedCount,
+            failedCount: 0,
+            isPaused: pauseTokenSource.IsPaused);
+
+        viewModel.UpdateStats(stats);
+    }
+
+    // Run the interactive dashboard
+    await dashboard.RunAsync(UpdateMockDataAsync, cancellationToken);
+
+    Console.WriteLine("\n✓ Demo completed!");
 }
 

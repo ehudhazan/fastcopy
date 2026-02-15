@@ -98,6 +98,24 @@ public sealed class TokenBucket
     }
 
     /// <summary>
+    /// Get the current rate limit in bytes per second.
+    /// Returns 0 if in bypass mode (unlimited).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public long GetCurrentLimit()
+    {
+        // Check if in bypass mode
+        if (Interlocked.Read(ref _bypassMode) == 1)
+        {
+            return 0;
+        }
+        
+        // Return the current refill rate (unscaled)
+        long scaledRate = Interlocked.Read(ref _scaledRefillRate);
+        return scaledRate / SCALE;
+    }
+
+    /// <summary>
     /// Attempt to consume tokens from the bucket. Blocks using SpinWait if insufficient tokens.
     /// Zero-GC design: uses Interlocked operations and SpinWait instead of locks or Task.Delay.
     /// </summary>
