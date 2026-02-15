@@ -57,7 +57,7 @@ public sealed class DashboardRenderer
 
         if (_viewModel.IsPaused)
         {
-            stats += $"  |  [yellow bold][PAUSED][/]";
+            stats += $"  |  [yellow bold][[PAUSED]][/]";
         }
 
         var rightPanel = new Panel(new Markup(stats))
@@ -130,6 +130,12 @@ public sealed class DashboardRenderer
 
         // Status message (escape to prevent markup parsing issues)
         var statusText = new Markup($"[white]{Markup.Escape(_viewModel.StatusMessage)}[/]");
+        
+        // Notification (if active)
+        var notification = _viewModel.GetActiveNotification();
+        var notificationText = notification != null 
+            ? new Markup($"[black on yellow] ► {Markup.Escape(notification)} [/]") 
+            : new Markup("");
 
         // Help text with keyboard controls
         var helpText = new Markup(
@@ -140,6 +146,10 @@ public sealed class DashboardRenderer
 
         grid.AddRow(progressBar);
         grid.AddRow(statusText);
+        if (notification != null)
+        {
+            grid.AddRow(notificationText);
+        }
         grid.AddRow(helpText);
 
         return new Panel(grid)

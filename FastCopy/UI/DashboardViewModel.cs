@@ -19,6 +19,8 @@ public sealed class DashboardViewModel
     private int _completedCount = 0;
     private int _failedCount = 0;
     private bool _isPaused = false;
+    private string? _notification = null;
+    private DateTime _notificationTime = DateTime.MinValue;
 
     public string GlobalSpeed { get { lock (_lock) return _globalSpeed; } }
     public double Progress { get { lock (_lock) return _progress; } }
@@ -28,6 +30,34 @@ public sealed class DashboardViewModel
     public int CompletedCount { get { lock (_lock) return _completedCount; } }
     public int FailedCount { get { lock (_lock) return _failedCount; } }
     public bool IsPaused { get { lock (_lock) return _isPaused; } }
+    
+    /// <summary>
+    /// Get the current notification if it's still active (displayed for 3 seconds).
+    /// </summary>
+    public string? GetActiveNotification()
+    {
+        lock (_lock)
+        {
+            if (_notification != null && (DateTime.UtcNow - _notificationTime).TotalSeconds < 3)
+            {
+                return _notification;
+            }
+            return null;
+        }
+    }
+    
+    /// <summary>
+    /// Set a notification message to be displayed for 3 seconds.
+    /// Thread-safe, can be called from any thread.
+    /// </summary>
+    public void SetNotification(string message)
+    {
+        lock (_lock)
+        {
+            _notification = message;
+            _notificationTime = DateTime.UtcNow;
+        }
+    }
 
     /// <summary>
     /// Get a snapshot of current workers (thread-safe copy).

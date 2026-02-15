@@ -150,7 +150,7 @@ public sealed class InteractiveDashboard : IDisposable
         if (_pauseTokenSource != null)
         {
             _pauseTokenSource.Toggle();
-            ShowNotification(_pauseTokenSource.IsPaused ? "⏸ Paused" : "▶ Resumed");
+            _viewModel.SetNotification(_pauseTokenSource.IsPaused ? "⏸ Paused" : "▶ Resumed");
         }
     }
 
@@ -190,11 +190,11 @@ public sealed class InteractiveDashboard : IDisposable
             }
 
             TransferEngine.SetGlobalLimit(newLimit);
-            ShowNotification($"Speed limit: {FormatSpeed(newLimit)}");
+            _viewModel.SetNotification($"Speed limit: {FormatSpeed(newLimit)}");
         }
         else
         {
-            ShowNotification("No rate limit set (unlimited)");
+            _viewModel.SetNotification("No rate limit set (unlimited)");
         }
     }
 
@@ -203,13 +203,13 @@ public sealed class InteractiveDashboard : IDisposable
         // Reset to a default speed (e.g., 100 MB/s)
         long defaultLimit = 100L * 1024 * 1024;
         TransferEngine.SetGlobalLimit(defaultLimit);
-        ShowNotification($"Speed limit reset to {FormatSpeed(defaultLimit)}");
+        _viewModel.SetNotification($"Speed limit reset to {FormatSpeed(defaultLimit)}");
     }
 
     private void SetUnlimitedSpeed()
     {
         TransferEngine.ClearGlobalLimit();
-        ShowNotification("Speed limit: UNLIMITED");
+        _viewModel.SetNotification("Speed limit: UNLIMITED");
     }
 
     private long GetCurrentSpeedLimit()
@@ -218,12 +218,7 @@ public sealed class InteractiveDashboard : IDisposable
         return 50L * 1024 * 1024;
     }
 
-    private void ShowNotification(string message)
-    {
-        // For now, update status message in ViewModel
-        // In future, could show a temporary overlay
-        AnsiConsole.MarkupLine($"[yellow]► {message}[/]");
-    }
+    // ShowNotification method removed - now using _viewModel.SetNotification() directly
 
     private static string FormatSpeed(long bytesPerSec)
     {
