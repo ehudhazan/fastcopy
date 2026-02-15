@@ -276,11 +276,11 @@ static async Task RunSpectreConsoleDashboardDemoAsync(CancellationToken cancella
     var viewModel = new DashboardViewModel();
     var pauseTokenSource = new PauseTokenSource();
     
-    // Create mock workers for demo
-    var mockWorkers = new List<WorkerState>();
-    for (int i = 0; i < 15; i++)
+    // Create mock workers for demo (pool of 32 potential workers)
+    var mockWorkersPool = new List<WorkerState>();
+    for (int i = 0; i < 32; i++)
     {
-        mockWorkers.Add(new WorkerState
+        mockWorkersPool.Add(new WorkerState
         {
             FileName = $"large_file_{i:D4}.dat",
             Status = "Copying",
@@ -291,60 +291,151 @@ static async Task RunSpectreConsoleDashboardDemoAsync(CancellationToken cancella
         });
     }
 
+    // Start with 8 active workers
+    int activeWorkerCount = 8;
+    viewModel.SetMaxWorkers(activeWorkerCount);
+
     // Set a demo speed limit
     TransferEngine.SetGlobalLimit(50L * 1024 * 1024); // 50 MB/s initial
 
-    // Create interactive dashboard
-    using var dashboard = new InteractiveDashboard(viewModel, pauseTokenSource);
+    // Worker count change callback
+    void OnWorkerCountChanged(int newCount)
+    {
+        activeWorkerCount = newCount;
+        viewModel.SetMaxWorkers(newCount);
+    }
+
+    // Create interactive dashboard with worker count callback
+    using var dashboard = new InteractiveDashboard(viewModel, pauseTokenSource, OnWorkerCountChanged);
 
     Console.WriteLine("Starting Interactive Dashboard Demo...");
-    Console.WriteLine("Try the controls: P=Pause, H=Hide, +/-=Speed, U=Unlimited, R=Reset, Q=Quit");
+    Console.WriteLine("Try the controls: P=Pause, H=Hide, +/-=Speed, [/]=Workers, U=Unlimited, R=Reset, Q=Quit");
     await Task.Delay(2000, cancellationToken);
+
+    // Track which workers are in which state
+    var activeWorkers = new List<WorkerState>();
+    var pendingWorkers = new Queue<WorkerState>(mockWorkersPool);
+    var completedWorkers = new List<WorkerState>();
+
+    // Initialize with starting worker count
+    for (int i = 0; i < activeWorkerCount && pendingWorkers.Count > 0; i++)
+    {
+        var worker = pendingWorkers.Dequeue();
+        worker.Status = "Copying";
+        activeWorkers.Add(worker);
+    }
 
     // Define the update function for mock data
     async Task UpdateMockDataAsync(CancellationToken ct)
     {
         var random = new Random();
         
-        // Update mock workers
-        foreach (var worker in mockWorkers)
+        // Adjust active workers based on current count setting
+        while (activeWorkers.Count < activeWorkerCount && pendingWorkers.Count > 0)
+        {
+            // Start new worker from pending queue
+            var worker = pendingWorkers.Dequeue();
+            worker.Status = "Copying";
+            worker.Progress = 0.0;
+            worker.Speed = 0.0;
+            worker.BytesTransferred = 0;
+            activeWorkers.Add(worker);
+        }
+        
+        while (activeWorkers.Count > activeWorkerCount)
+        {
+            // Pause excess workers by moving back to pending (only non-completed ones)
+            var workerToRemove = activeWorkers.FirstOrDefault(w => w.Status == "Copying" && w.Progress < 50);
+            if (workerToRemove != null)
+            {
+                activeWorkers.Remove(workerToRemove);
+                workerToRemove.Status = "Pending";
+                workerToRemove.Speed = 0;
+                // Don't reset progress, keep it for resume
+            }
+            else
+            {
+                break; // Let currently progressed workers finish
+            }
+        }
+        
+        // Update active workers
+        var workersToComplete = new List<WorkerState>();
+        
+        // Get global speed limit to simulate realistic speeds
+        long globalLimit = TransferEngine.GetGlobalLimit();
+        long perWorkerLimit = globalLimit > 0 && activeWorkers.Count > 0 
+            ? globalLimit / activeWorkers.Count 
+            : 100L * 1024 * 1024; // Default 100 MB/s per worker if unlimited
+        
+        foreach (var worker in activeWorkers)
         {
             // Only update if not paused
             if (worker.Status == "Copying" && !pauseTokenSource.IsPaused)
             {
+                // Simulate speed based on global limit with some variance (80%-120%)
+                long baseSpeed = perWorkerLimit;
+                double variance = random.NextDouble() * 0.4 + 0.8; // 0.8 to 1.2
+                worker.Speed = (long)(baseSpeed * variance);
+                
+                // Calculate bytes transferred based on speed (100ms update interval)
+                long bytesThisUpdate = (long)(worker.Speed * 0.1); // 10% of per-second speed
                 worker.BytesTransferred = Math.Min(
-                    worker.BytesTransferred + random.Next(1, 10) * 1024 * 1024,
+                    worker.BytesTransferred + bytesThisUpdate,
                     worker.TotalBytes);
                 worker.Progress = (double)worker.BytesTransferred / worker.TotalBytes * 100.0;
-                worker.Speed = random.Next(10, 150) * 1024 * 1024;
 
                 if (worker.BytesTransferred >= worker.TotalBytes)
                 {
                     worker.Status = "Completed";
                     worker.Speed = 0;
+                    workersToComplete.Add(worker);
                 }
+            }
+            else if (worker.Status == "Copying" && pauseTokenSource.IsPaused)
+            {
+                // Paused workers have zero speed
+                worker.Speed = 0;
+            }
+        }
+        
+        // Move completed workers and start new ones
+        foreach (var completedWorker in workersToComplete)
+        {
+            activeWorkers.Remove(completedWorker);
+            completedWorkers.Add(completedWorker);
+            
+            // Start a new worker if available and under limit
+            if (pendingWorkers.Count > 0 && activeWorkers.Count < activeWorkerCount)
+            {
+                var newWorker = pendingWorkers.Dequeue();
+                newWorker.Status = "Copying";
+                newWorker.Progress = 0.0;
+                newWorker.Speed = 0.0;
+                newWorker.BytesTransferred = 0;
+                activeWorkers.Add(newWorker);
             }
         }
 
-        // Calculate global stats
-        long totalTransferred = mockWorkers.Sum(w => w.BytesTransferred);
-        long totalBytes = mockWorkers.Sum(w => w.TotalBytes);
+        // Calculate global stats (all workers for total, only active for display)
+        int totalFiles = mockWorkersPool.Count;
+        long totalTransferred = activeWorkers.Sum(w => w.BytesTransferred) + completedWorkers.Sum(w => w.BytesTransferred);
+        long totalBytes = mockWorkersPool.Sum(w => w.TotalBytes);
         double globalProgress = totalBytes > 0 ? (double)totalTransferred / totalBytes : 0.0;
-        double globalSpeed = mockWorkers.Where(w => w.Status == "Copying").Sum(w => w.Speed);
-        int completedCount = mockWorkers.Count(w => w.Status == "Completed");
-        int copyingCount = mockWorkers.Count(w => w.Status == "Copying");
+        double globalSpeed = activeWorkers.Where(w => w.Status == "Copying").Sum(w => w.Speed);
+        int copyingCount = activeWorkers.Count(w => w.Status == "Copying");
 
-        // Update ViewModel
+        // Update ViewModel (show only active workers in the table)
         var stats = new TransferStats(
-            workers: mockWorkers.ToArray(),
+            workers: activeWorkers.ToArray(),
             globalSpeed: globalSpeed,
             progress: globalProgress,
             statusMessage: pauseTokenSource.IsPaused
-                ? $"⏸ Paused (Demo) | Copying: {copyingCount} | Done: {completedCount}/{mockWorkers.Count}"
-                : $"▶ Demo Mode | Copying: {copyingCount} | Done: {completedCount}/{mockWorkers.Count}",
+                ? $"⏸ Paused (Demo) | Active: {copyingCount} | Done: {completedWorkers.Count}/{totalFiles} | Pending: {pendingWorkers.Count}"
+                : $"▶ Demo Mode | Active: {copyingCount} | Done: {completedWorkers.Count}/{totalFiles} | Pending: {pendingWorkers.Count}",
             totalBytesTransferred: totalTransferred,
             totalBytes: totalBytes,
-            completedCount: completedCount,
+            completedCount: completedWorkers.Count,
             failedCount: 0,
             isPaused: pauseTokenSource.IsPaused);
 

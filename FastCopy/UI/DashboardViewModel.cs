@@ -21,6 +21,7 @@ public sealed class DashboardViewModel
     private bool _isPaused = false;
     private string? _notification = null;
     private DateTime _notificationTime = DateTime.MinValue;
+    private int _maxWorkers = 0;
 
     public string GlobalSpeed { get { lock (_lock) return _globalSpeed; } }
     public double Progress { get { lock (_lock) return _progress; } }
@@ -30,6 +31,7 @@ public sealed class DashboardViewModel
     public int CompletedCount { get { lock (_lock) return _completedCount; } }
     public int FailedCount { get { lock (_lock) return _failedCount; } }
     public bool IsPaused { get { lock (_lock) return _isPaused; } }
+    public int MaxWorkers { get { lock (_lock) return _maxWorkers; } }
     
     /// <summary>
     /// Get the current notification if it's still active (displayed for 3 seconds).
@@ -56,6 +58,18 @@ public sealed class DashboardViewModel
         {
             _notification = message;
             _notificationTime = DateTime.UtcNow;
+        }
+    }
+    
+    /// <summary>
+    /// Set the max workers count.
+    /// Thread-safe, can be called from any thread.
+    /// </summary>
+    public void SetMaxWorkers(int count)
+    {
+        lock (_lock)
+        {
+            _maxWorkers = count;
         }
     }
 

@@ -37,6 +37,54 @@ public sealed class DashboardRenderer
         return layout;
     }
 
+    /// <summary>
+    /// Render a minimal hidden view showing only essential stats.
+    /// Uses the same Layout structure as Render() for consistency.
+    /// </summary>
+    public IRenderable RenderHidden()
+    {
+        // Build status line with pause indicator
+        var statusLine = $"[cyan]Speed:[/] {_viewModel.GlobalSpeed}  |  " +
+                        $"[green]Completed:[/] {_viewModel.CompletedCount}  |  " +
+                        $"[yellow]Progress:[/] {_viewModel.Progress:F1}%";
+        
+        if (_viewModel.IsPaused)
+        {
+            statusLine += $"\n[yellow bold][[PAUSED]][/]";
+        }
+        
+        // Show notification if active
+        var notification = _viewModel.GetActiveNotification();
+        if (notification != null)
+        {
+            statusLine += $"\n\n[black on yellow] ► {Markup.Escape(notification)} [/]";
+        }
+        
+        var panel = new Panel(
+            new Markup(
+                $"[grey]Dashboard Hidden[/]\n\n" +
+                statusLine + 
+                $"\n\n[grey]Press [cyan]H[/] to show dashboard, [cyan]Q[/] to quit[/]"))
+            .Border(BoxBorder.Rounded)
+            .BorderColor(Color.Grey)
+            .Header("[grey]FastCopy[/]");
+
+        // Use the same Layout structure as Render() to avoid rendering issues
+        var layout = new Layout("Root")
+            .SplitRows(
+                new Layout("Header").Size(3),
+                new Layout("Body"),
+                new Layout("Footer").Size(5)
+            );
+
+        // Empty panels instead of empty text for proper rendering
+        layout["Header"].Update(new Panel(new Text(" ")).Border(BoxBorder.None));
+        layout["Body"].Update(panel);
+        layout["Footer"].Update(new Panel(new Text(" ")).Border(BoxBorder.None));
+
+        return layout;
+    }
+
     private IRenderable RenderHeader()
     {
         var grid = new Grid();
@@ -49,6 +97,11 @@ public sealed class DashboardRenderer
 
         var stats = $"[green bold]Speed: {_viewModel.GlobalSpeed}[/]  |  " +
                     $"[white]Completed: {_viewModel.CompletedCount}[/]";
+
+        if (_viewModel.MaxWorkers > 0)
+        {
+            stats += $"  |  [cyan]Workers: {_viewModel.MaxWorkers}[/]";
+        }
 
         if (_viewModel.FailedCount > 0)
         {
@@ -133,20 +186,21 @@ public sealed class DashboardRenderer
         
         // Notification (if active)
         var notification = _viewModel.GetActiveNotification();
-        var notificationText = notification != null 
+        IRenderable? notificationText = notification != null 
             ? new Markup($"[black on yellow] ► {Markup.Escape(notification)} [/]") 
-            : new Markup("");
+            : null;
 
         // Help text with keyboard controls
         var helpText = new Markup(
             "[grey]Controls: [cyan]P[/]/[cyan]Space[/]=Pause  " +
             "[cyan]H[/]=Hide  [cyan]+/-[/]=Speed  " +
             "[cyan]U[/]=Unlimited  [cyan]R[/]=Reset  " +
+            "[cyan][[/]][/]=Workers  " +
             "[cyan]Q[/]/[cyan]Esc[/]=Quit[/]");
 
         grid.AddRow(progressBar);
         grid.AddRow(statusText);
-        if (notification != null)
+        if (notification != null && notificationText != null)
         {
             grid.AddRow(notificationText);
         }

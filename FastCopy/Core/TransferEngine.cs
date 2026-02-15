@@ -54,6 +54,18 @@ public sealed class TransferEngine
     }
 
     /// <summary>
+    /// Get the current global rate limit in bytes per second.
+    /// Returns 0 if no limit is set (unlimited).
+    /// </summary>
+    public static long GetGlobalLimit()
+    {
+        lock (_limiterLock)
+        {
+            return _globalRateLimiter?.GetCurrentLimit() ?? 0;
+        }
+    }
+
+    /// <summary>
     /// Clear the global rate limit (removes all rate limiting).
     /// </summary>
     public static void ClearGlobalLimit()

@@ -13,6 +13,7 @@ public sealed class InteractiveDashboard : IDisposable
     private readonly DashboardRenderer _renderer;
     private readonly PauseTokenSource? _pauseTokenSource;
     private readonly CancellationTokenSource _cts;
+    private readonly Action<int>? _onWorkerCountChanged;
     private bool _hidden;
     private bool _disposed;
 
@@ -20,12 +21,15 @@ public sealed class InteractiveDashboard : IDisposable
 
     public InteractiveDashboard(
         DashboardViewModel viewModel,
-        PauseTokenSource? pauseTokenSource = null)
+        PauseTokenSource? pauseTokenSource = null,
+        Action<int>? onWorkerCountChanged = null)
     {
         _viewModel = viewModel;
         _renderer = new DashboardRenderer(viewModel);
         _pauseTokenSource = pauseTokenSource;
+        _onWorkerCountChanged = onWorkerCountChanged;
         _cts = new CancellationTokenSource();
+        _hidden = false;
     }
 
     /// <summary>
@@ -43,33 +47,52 @@ public sealed class InteractiveDashboard : IDisposable
         var inputTask = Task.Run(() => HandleInputAsync(token), token);
 
         // Start Spectre.Console Live display
-        await AnsiConsole.Live(_renderer.Render())
-            .AutoClear(false)
-            .Overflow(VerticalOverflow.Ellipsis)
-            .Cropping(VerticalOverflowCropping.Top)
-            .StartAsync(async ctx =>
-            {
-                while (!token.IsCancellationRequested && !ShouldExit)
+        try
+        {
+            await AnsiConsole.Live(_renderer.Render())
+                .AutoClear(false)
+                .Overflow(VerticalOverflow.Ellipsis)
+                .Cropping(VerticalOverflowCropping.Top)
+                .StartAsync(async ctx =>
                 {
-                    if (!_hidden)
+                    while (!token.IsCancellationRequested && !ShouldExit)
                     {
-                        // Update worker statistics
-                        await updateWorkerStatsAsync(token);
+                        try
+                        {
+                            // Always update worker statistics (even when hidden)
+                            await updateWorkerStatsAsync(token);
 
-                        // Refresh display
-                        ctx.UpdateTarget(_renderer.Render());
+                            // Refresh display (hidden or visible)
+                            ctx.UpdateTarget(_hidden ? _renderer.RenderHidden() : _renderer.Render());
+
+                            await Task.Delay(100, token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Expected on cancellation - exit gracefully
+                            break;
+                        }
                     }
 
-                    await Task.Delay(100, token);
-                }
-
-                // Final update
-                if (!_hidden)
-                {
-                    await Task.Delay(200, token);
-                    ctx.UpdateTarget(_renderer.RenderFinalState());
-                }
-            });
+                    // Final update
+                    if (!_hidden)
+                    {
+                        try
+                        {
+                            await Task.Delay(200, token);
+                            ctx.UpdateTarget(_renderer.RenderFinalState());
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Ignore cancellation during final update
+                        }
+                    }
+                });
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected on cancellation
+        }
 
         // Wait for input handler to complete
         try
@@ -134,6 +157,16 @@ public sealed class InteractiveDashboard : IDisposable
                             SetUnlimitedSpeed();
                             break;
                     }
+                    
+                    // Check character for bracket keys (not all ConsoleKey enum values exist)
+                    if (key.KeyChar == '[')
+                    {
+                        AdjustWorkers(increase: false);
+                    }
+                    else if (key.KeyChar == ']')
+                    {
+                        AdjustWorkers(increase: true);
+                    }
                 }
 
                 await Task.Delay(50, cancellationToken);
@@ -157,45 +190,38 @@ public sealed class InteractiveDashboard : IDisposable
     private void ToggleVisibility()
     {
         _hidden = !_hidden;
-        if (!_hidden)
-        {
-            Console.Clear();
-        }
-        else
-        {
-            Console.Clear();
-            Console.WriteLine("Dashboard hidden. Press H to show, Q to quit.");
-        }
+        _viewModel.SetNotification(_hidden ? "Dashboard hidden (H to show)" : "Dashboard visible");
     }
 
     private void AdjustSpeed(bool increase)
     {
-        var rateLimiter = TransferEngine.GetGlobalRateLimiter();
-        if (rateLimiter != null)
+        long currentLimit = TransferEngine.GetGlobalLimit();
+        
+        if (currentLimit == 0)
         {
-            long currentLimit = GetCurrentSpeedLimit();
-            long newLimit;
-
-            if (increase)
-            {
-                // Increase by 25%
-                newLimit = (long)(currentLimit * 1.25);
-                if (newLimit == currentLimit) newLimit = currentLimit + (10 * 1024 * 1024); // Min +10MB
-            }
-            else
-            {
-                // Decrease by 20%
-                newLimit = (long)(currentLimit * 0.8);
-                if (newLimit < 1024 * 1024) newLimit = 1024 * 1024; // Min 1MB/s
-            }
-
-            TransferEngine.SetGlobalLimit(newLimit);
-            _viewModel.SetNotification($"Speed limit: {FormatSpeed(newLimit)}");
+            // No limit set, start with a default
+            currentLimit = 50L * 1024 * 1024; // 50 MB/s
+            TransferEngine.SetGlobalLimit(currentLimit);
+            _viewModel.SetNotification($"Speed limit set to {FormatSpeed(currentLimit)}");
+            return;
+        }
+        
+        long newLimit;
+        if (increase)
+        {
+            // Increase by 25%
+            newLimit = (long)(currentLimit * 1.25);
+            if (newLimit == currentLimit) newLimit = currentLimit + (10 * 1024 * 1024); // Min +10MB
         }
         else
         {
-            _viewModel.SetNotification("No rate limit set (unlimited)");
+            // Decrease by 20%
+            newLimit = (long)(currentLimit * 0.8);
+            if (newLimit < 1024 * 1024) newLimit = 1024 * 1024; // Min 1MB/s
         }
+
+        TransferEngine.SetGlobalLimit(newLimit);
+        _viewModel.SetNotification($"Speed limit: {FormatSpeed(newLimit)}");
     }
 
     private void ResetSpeed()
@@ -212,11 +238,33 @@ public sealed class InteractiveDashboard : IDisposable
         _viewModel.SetNotification("Speed limit: UNLIMITED");
     }
 
-    private long GetCurrentSpeedLimit()
+    private void AdjustWorkers(bool increase)
     {
-        // Default to 50 MB/s if not set
-        return 50L * 1024 * 1024;
+        int currentWorkers = _viewModel.MaxWorkers;
+        if (currentWorkers == 0)
+        {
+            currentWorkers = 4; // Default starting point
+        }
+
+        int newWorkers;
+        if (increase)
+        {
+            newWorkers = Math.Min(currentWorkers + 1, 32); // Max 32 workers
+        }
+        else
+        {
+            newWorkers = Math.Max(currentWorkers - 1, 1); // Min 1 worker
+        }
+
+        if (newWorkers != currentWorkers)
+        {
+            _viewModel.SetMaxWorkers(newWorkers);
+            _onWorkerCountChanged?.Invoke(newWorkers);
+            _viewModel.SetNotification($"Workers: {newWorkers}");
+        }
     }
+
+
 
     // ShowNotification method removed - now using _viewModel.SetNotification() directly
 
